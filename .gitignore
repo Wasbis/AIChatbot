@@ -1,0 +1,52 @@
+# ==========================================
+# 1. VIRTUAL ENVIRONMENT
+# ==========================================
+# File environment lokal yang ukurannya besar
+.venv/
+venv/
+env/
+ENV/
+
+# ==========================================
+# 2. ENVIRONMENT VARIABLES (SECRET)
+# ==========================================
+# HARAM hukumnya ke-push ke public (Isinya API Key Groq, dll)
+.env
+.env.local
+.env.*
+# Pengecualian: .env.example boleh di-push sebagai template
+!.env.example
+
+# ==========================================
+# 3. PYTHON CACHE & LOGS
+# ==========================================
+# File sampah hasil compile Python di background
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# ==========================================
+# 4. DATABASE & RAG (VECTOR STORE) DATA
+# ==========================================
+# Jangan push file database lokal dan folder dokumen/vector
+*.db
+*.sqlite3
+cliste_ai.db
+/data/
+/data/vectorstore/
+
+# ==========================================
+# 5. IDE & OS HIDDEN FILES
+# ==========================================
+# Konfigurasi lokal dari VS Code / OS
+
+# ==========================================
+# 6. TESTING, BUILD, & OTHERS
+# ==========================================
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
