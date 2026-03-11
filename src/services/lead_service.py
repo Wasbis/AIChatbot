@@ -3,49 +3,47 @@ from sqlalchemy.orm import Session
 from src.models.leads import Lead
 
 
-def extract_and_save_lead(text: str, session_id: str, db: Session):
+def extract_and_save_lead(message: str, session_id: str, db: Session) -> bool:
     """
-    Fungsi untuk mengekstrak Nama, Email, dan Nomor HP dari teks chat,
-    lalu menyimpannya ke database Leads.
+    HANYA me-return True jika ada kontak BARU yang berhasil ditangkap di pesan SAAT INI.
     """
-    # 1. Regex Email & Phone (Masih sama)
     email_pattern = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"
-    phone_pattern = r"(?:\+62|62|0)8[0-9]{7,11}"
+    phone_pattern = r"(?:\+62|62|0)8[1-9][0-9]{7,11}"
 
-    # 2. Regex Baru untuk NAMA (Menangkap 1-2 kata setelah "saya", "dengan", "panggil")
-    # Contoh yang tertangkap: "saya diya", "dengan abid", "nama saya budi"
-    name_pattern = r"(?:saya|nama saya|dengan|panggil)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)"
+    emails = re.findall(email_pattern, message)
+    phones = re.findall(phone_pattern, message)
 
-    # Eksekusi pencarian
-    emails = re.findall(email_pattern, text)
-    phones = re.findall(phone_pattern, text)
-    names = re.findall(
-        name_pattern, text.lower()
-    )  # lower() biar gak pusing huruf besar/kecil
+    # Kalau chat ini gak ngandung WA/Email, langsung false!
+    if not emails and not phones:
+        return False
 
-    email = emails[0] if emails else None
-    phone = phones[0] if phones else None
-    # Rapihkan format nama (huruf awalan kapital)
-    name = names[0].title() if names else None
+    existing_lead = db.query(Lead).filter(Lead.session_id == session_id).first()
 
-    # Jika nemu salah satu aja (email / hp / nama), gass simpan!
-    if email or phone or name:
-        existing_lead = db.query(Lead).filter(Lead.session_id == session_id).first()
-
-        if existing_lead:
-            # Update data yang masih kosong
-            if email and not existing_lead.email:
-                existing_lead.email = email
-            if phone and not existing_lead.phone:
-                existing_lead.phone = phone
-            if name and not existing_lead.name:
-                existing_lead.name = name
-        else:
-            # Bikin data lead baru
-            new_lead = Lead(session_id=session_id, email=email, phone=phone, name=name)
-            db.add(new_lead)
-
+    if existing_lead:
+        # Update kalau user ngasih info tambahan
+        if emails and not existing_lead.email:
+            existing_lead.email = emails[0]
+        if phones and not existing_lead.phone:
+            existing_lead.phone = phones[0]
         db.commit()
-        return True
+        return True  # Kontak baru berhasil ditambahkan
 
-    return False
+    # Bikin data prospek baru
+    new_lead = Lead(
+        session_id=session_id,
+        email=emails[0] if emails else None,
+        phone=phones[0] if phones else None,
+        name="Prospek B2B",
+    )
+    db.add(new_lead)
+    db.commit()
+
+    return True
+
+
+def check_has_contact(session_id: str, db: Session) -> bool:
+    """
+    Cek apakah sesi klien ini sudah pernah memberikan kontak sebelumnya.
+    """
+    lead = db.query(Lead).filter(Lead.session_id == session_id).first()
+    return bool(lead and (lead.email or lead.phone))

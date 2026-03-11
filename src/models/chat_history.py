@@ -13,5 +13,3 @@ class ChatLog(Base):
     intent = Column(String, nullable=True)  # Menyimpan deteksi TECHNICAL/SALES/dll
     needs_human = Column(Boolean, default=False)  # Flag untuk notifikasi tim konsultan
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    session_id = Column(String(255), index=True)

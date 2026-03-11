@@ -3,9 +3,9 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from src.schemas.chat import ChatRequest, ChatResponse
 from src.services.rag_service import get_rag_chain, classify_intent
-from src.services.lead_service import extract_and_save_lead  # IMPORT INTELNYA
 from src.core.database import get_db
 from src.models.chat_history import ChatLog
+from src.services.lead_service import extract_and_save_lead, check_has_contact
 
 router = APIRouter()
 rag_chain = get_rag_chain()
@@ -29,13 +29,17 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
         db.commit()
 
         # --- 2. JALANKAN INTEL LEAD EXTRACTOR ---
-        # AI akan memindai pesan user (misal: "Boleh, hubungi WA gue 081234567890")
-        is_contact_captured = extract_and_save_lead(
+        # Cek apakah di pesan SAAT INI user ngetik kontak
+        just_captured_contact = extract_and_save_lead(
             request.message, current_session_id, db
         )
-        if is_contact_captured:
+
+        # Cek apakah database SUDAH PUNYA kontak untuk session ini
+        has_contact_in_db = check_has_contact(current_session_id, db)
+
+        if just_captured_contact:
             print(
-                f"🎯 BINGO! Kontak berhasil ditangkap untuk session: {current_session_id}"
+                f"🎯 BINGO! Kontak BARU berhasil ditangkap untuk session: {current_session_id}"
             )
 
         # 3. FORMAT HISTORY
@@ -61,15 +65,14 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
             history_count = len(request.history) if request.history else 0
 
             # --- 5. LOGIKA NGELES PROAKTIF (Update) ---
-            # Kita cuma nanya kontak KALAU kontaknya belum berhasil dicapture
-            if history_count > 0 and not is_contact_captured:
-                # Cek ulang di string answer-nya LLM biar gak nanya 2 kali
+            # Kita cuma nanya kontak KALAU database belum punya kontaknya sama sekali
+            if history_count > 0 and not has_contact_in_db:
                 if "kontak" not in answer.lower() and "email" not in answer.lower():
-                    answer += "\n\nUntuk diskusi teknis lebih detail, boleh saya minta nomor WhatsApp atau email Anda? Tim ahli kami akan segera menghubungi."
+                    answer += "\n\nUntuk menyusun scope of work dan penawaran yang presisi, tim expert kami siap melakukan diskusi teknis lebih mendalam. Boleh saya minta alamat email perusahaan atau nomor WhatsApp Anda?"
 
-            # (Bonus UX) Kalau kontak barusan dapet, kasih ucapan terima kasih!
-            if is_contact_captured:
-                answer += "\n\n*Terima kasih atas kontaknya! Tim konsultan kami akan segera menghubungi Anda.*"
+            # (Bonus UX) Kalau kontak BARUSAN BANGET dapet di chat ini, kasih ucapan terima kasih!
+            if just_captured_contact:
+                answer += "\n\n*Terima kasih! Kontak Anda telah kami simpan. Tim engineer kami akan segera menghubungi Anda.*"
 
         # 6. REKAM JAWABAN AI
         ai_log = ChatLog(
