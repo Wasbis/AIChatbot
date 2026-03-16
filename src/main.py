@@ -1,13 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from src.api.v1 import chat
+
+# Import semua router dari folder api/v1
+from src.api.v1 import chat, leads, ingest
 
 # --- 1. IMPORT DATABASE & MODELS ---
-# Sesuaikan path dengan struktur folder lu (src/core/database.py)
 from src.core.database import engine, Base
 
-# Import model wajib dilakukan di sini agar SQLAlchemy 'membaca' cetakannya sebelum bikin tabel
-from src.models import leads, chat_history
+# PENTING: Kasih alias "lead_models" biar gak bentrok sama router "leads" di atas
+from src.models import leads as lead_models, chat_history
 
 # --- 2. JALANKAN MESIN PEMBUAT TABEL ---
 # Baris sakti ini akan mengecek: Kalau cliste_ai.db belum ada, dia bakal bikin file dan tabelnya.
@@ -28,8 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Daftarin endpoint chat tadi
-app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
+# --- 3. DAFTARIN SEMUA ENDPOINT ---
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chatbot"])
+app.include_router(leads.router, prefix="/api/v1/leads", tags=["Lead Management"])
+app.include_router(ingest.router, prefix="/api/v1/ingest", tags=["Data Ingestion"])
 
 
 @app.get("/")

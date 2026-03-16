@@ -38,6 +38,11 @@ def ingest_documents():
     text_splitter = get_text_splitter()
 
     # 4. Looping untuk nge-baca dan memotong setiap PDF
+
+
+def ingest_documents():
+    # ... (setup embeddings tetap sama)
+
     for file in pdf_files:
         file_path = os.path.join(RAW_DATA_DIR, file)
         print(f"📄 Membaca dokumen: {file}")
@@ -45,9 +50,20 @@ def ingest_documents():
         loader = PyPDFLoader(file_path)
         documents = loader.load()
 
+        # --- FIX: Tambahkan Metadata ke setiap page sebelum di-split ---
+        for doc in documents:
+            doc.metadata["source_type"] = "PDF"
+            doc.metadata["reliability_score"] = (
+                1.5  # PDF lebih tinggi dari Website (1.2)
+            )
+
         chunks = text_splitter.split_documents(documents)
+
+        # Pastikan metadata juga turun ke chunks (biasanya otomatis, tapi kita pastiin)
         print(f"✂️  {file} berhasil dipecah menjadi {len(chunks)} chunks.")
         all_chunks.extend(chunks)
+
+    # ... (proses simpan ke ChromaDB tetap sama)
 
     # 5. Tanam ke Vector DB (ChromaDB Lokal)
     print(f"💾 Menyimpan {len(all_chunks)} chunks ke ChromaDB lokal...")

@@ -81,8 +81,8 @@ async def run_scraper():
                         page_content=clean_text,
                         metadata={
                             "source": url,
-                            "source_type": "WEBSITE",
-                            "reliability_score": 1.2,
+                            "source_type": "WEBSITE",  # Pembeda dengan PDF
+                            "reliability_score": 1.2,  # Lebih rendah dari PDF (1.5)
                             "page": f"Web_{i+1}",
                         },
                     )
