@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from src.schemas.chat import ChatRequest, ChatResponse
-from src.services.rag_service import get_rag_chain, classify_intent
+from src.services.rag_service_grok_v2 import get_rag_chain, classify_intent
 from src.core.database import get_db
 from src.models.chat_history import ChatLog
 from src.services.lead_service import extract_and_save_lead, check_has_contact

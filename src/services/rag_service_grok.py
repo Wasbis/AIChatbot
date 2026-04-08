@@ -1,22 +1,31 @@
 import os
+from operator import itemgetter
 from dotenv import load_dotenv
 from groq import RateLimitError
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings, ChatHuggingFace, HuggingFaceEndpoint
 from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
-from langchain.chains import create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 CHROMA_DB_DIR = "./data/vectorstore"
 
-# --- 1. INISIALISASI HYBRID LLM (GROQ + LOKAL) ---
+# --- 1. INISIALISASI HYBRID LLM (GEMMA + GROQ + LOKAL) ---
+# Prioritas utama: Gemma 4 E4B-it via Hugging Face Hub
+llm_huggingface = HuggingFaceEndpoint(
+    repo_id="google/gemma-4-E4B-it",
+    task="text-generation",
+    temperature=0.01,
+    huggingfacehub_api_token=os.getenv("HUGGINGFACEHUB_API_TOKEN"),
+)
+llm_gemma = ChatHuggingFace(llm=llm_huggingface)
+
 llm_groq = ChatGroq(
     model="llama-3.3-70b-versatile",
-    temperature=0.0,  # Wajib 0.0 agar output konsisten
+    temperature=0.0,
     api_key=os.getenv("GROQ_API_KEY"),
 )
 
@@ -25,29 +34,27 @@ llm_local = ChatOllama(
     temperature=0.0,
 )
 
-# Jika Groq kena limit (429), otomatis pindah ke lokal
-llm = llm_groq.with_fallbacks(
-    [llm_local],
+# Urutan prioritas: Gemma -> Groq -> Ollama Lokal
+llm = llm_gemma.with_fallbacks(
+    [llm_groq, llm_local],
     exceptions_to_handle=(RateLimitError, Exception)
 )
 
-# --- 2. FUNGSI KLASIFIKASI (KEMBALI KE SINI) ---
+# --- 2. FUNGSI KLASIFIKASI ---
 def classify_intent(user_input: str):
-    intent_prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """Klasifikasikan input user ke dalam salah satu kategori:
+    intent_prompt = ChatPromptTemplate.from_messages([
+        (
+            "system",
+            """Klasifikasikan input user ke dalam salah satu kategori:
         1. TECHNICAL: Pertanyaan engineering/reliability mendalam.
         2. SALES: Tanya harga, durasi, proposal, atau ingin kerjasama.
         3. KONSULTASI: User ingin diskusi, minta bantuan, atau konsultasi.
         4. CHITCHAT: Sapaan (halo, pagi) atau hal umum.
         
         Output HANYA satu kata: TECHNICAL, SALES, KONSULTASI, atau CHITCHAT.""",
-            ),
-            ("human", "{input}"),
-        ]
-    )
+        ),
+        ("human", "{input}"),
+    ])
     chain = intent_prompt | llm | StrOutputParser()
     try:
         return chain.invoke({"input": user_input}).strip().upper()
@@ -55,7 +62,14 @@ def classify_intent(user_input: str):
         print(f"⚠️ Error Klasifikasi: {e}")
         return "CHITCHAT"
 
-# --- 3. FUNGSI RAG UTAMA ---
+# --- 3. FUNGSI RAG UTAMA (LCEL PATTERN - KOMPATIBEL LANGCHAIN v1.x+) ---
+def format_docs(docs):
+    """Helper function untuk join dokumen jadi string dengan metadata."""
+    return "\n\n".join(
+        f"SUMBER REFERENSI: {doc.metadata.get('source')} (Halaman/Bagian: {doc.metadata.get('page')})\nISI DOKUMEN:\n{doc.page_content}"
+        for doc in docs
+    )
+
 def get_rag_chain():
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectorstore = Chroma(
@@ -64,7 +78,7 @@ def get_rag_chain():
         collection_name="cliste_knowledge",
     )
 
-    # --- PENTING: k=12 agar halaman website spesifik punya peluang lebih besar ---
+    # k=12 agar halaman website spesifik punya peluang lebih besar masuk context
     retriever = vectorstore.as_retriever(search_kwargs={"k": 12})
 
     # --- THE ENGINEER-LEVEL SYSTEM PROMPT (V7 - SPECIFIC LINK ANCHORING) ---
@@ -111,17 +125,30 @@ def get_rag_chain():
 {context}
 </konteks>"""
 
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", system_prompt), ("human", "{input}")]
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}")
+    ])
+
+    # --- LCEL CHAIN (Kompatibel dengan LangChain v1.x+) ---
+    # Langkah 1: Tarik dokumen dan passing semua variabel input secara paralel
+    retrieval_step = RunnableParallel(
+        context=itemgetter("input") | retriever,
+        input=itemgetter("input"),
+        chat_history=itemgetter("chat_history"),
+        contact_status=itemgetter("contact_status")
     )
 
-    document_prompt = PromptTemplate.from_template(
-        "SUMBER REFERENSI: {source} (Halaman/Bagian: {page})\\nISI DOKUMEN:\\n{page_content}\\n"
+    # Langkah 2: Format context jadi string, lempar ke LLM, tapi simpan context asli untuk tracing
+    rag_chain = retrieval_step.assign(
+        answer=(
+            RunnablePassthrough.assign(context=lambda x: format_docs(x["context"]))
+            | prompt
+            | llm
+            | StrOutputParser()
+        )
     )
 
-    # Chain sekarang menggunakan 'llm' hybrid otomatis
-    question_answer_chain = create_stuff_documents_chain(
-        llm=llm, prompt=prompt, document_prompt=document_prompt
-    )
+    return rag_chain
 
-    return create_retrieval_chain(retriever, question_answer_chain)
+
