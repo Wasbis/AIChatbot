@@ -11,27 +11,6 @@ from langchain_core.output_parsers import StrOutputParser
 load_dotenv()
 
 
-app = FastAPI(title="CRI Chatbot API")
-
-# --- KONFIGURASI CORS ---
-# Masukin list domain yang boleh nge-hit API ini
-origins = [
-    "http://localhost:3000",        # Development Next.js
-    "http://localhost:3001",
-    "https://cliste.co.id",         # Production Domain
-    "https://www.cliste.co.id",
-    "https://websiteclistev2.cliste.id",
-    "https://websitedevelopmentv2.cliste.id",
-    # "https://chatbot.cliste.id",  # Domain khusus chatbot kalau ada
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,           # Izinkan domain di atas
-    allow_credentials=True,
-    allow_methods=["*"],             # Izinkan semua method (GET, POST, dll)
-    allow_headers=["*"],             # Izinkan semua headers
-)
 
 CHROMA_DB_DIR = "./data/vectorstore"
 

@@ -21,12 +21,23 @@ app = FastAPI(
 )
 
 # Setup CORS biar frontend lu (React/Preact) nanti bisa nembak API ini
+# Masukin list domain yang boleh nge-hit API ini
+origins = [
+    "http://localhost:3000",        # Development Next.js
+    "http://localhost:3001",
+    "https://cliste.co.id",         # Production Domain
+    "https://www.cliste.co.id",
+    "https://websiteclistev2.cliste.id",
+    "https://websitedevelopmentv2.cliste.id",
+    # "https://chatbot.cliste.id",  # Domain khusus chatbot kalau ada
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,           # Izinkan domain di atas
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],             # Izinkan semua method (GET, POST, dll)
+    allow_headers=["*"],             # Izinkan semua headers
 )
 
 # --- 3. DAFTARIN SEMUA ENDPOINT ---
