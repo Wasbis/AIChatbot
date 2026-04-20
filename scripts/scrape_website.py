@@ -17,11 +17,11 @@ load_dotenv()
 CHROMA_DB_DIR = "./data/vectorstore"
 
 # --- CONFIG ---
-TARGET_SITEMAP = "https://cliste.co.id/sitemap.xml"
+TARGET_SITEMAP = "https://websiteclistev2.cliste.id/sitemap.xml"
 FALLBACK_URLS = [
-    "https://cliste.co.id/",
-    "https://cliste.co.id/about",
-    "https://cliste.co.id/services",
+    "https://websiteclistev2.cliste.id/",
+    "https://websiteclistev2.cliste.id/about",
+    "https://websiteclistev2.cliste.id/services",
 ]
 
 
@@ -61,7 +61,12 @@ async def run_scraper():
             try:
                 # --- FIX 2: Ganti networkidle ke domcontentloaded ---
                 # Ini ngasih tau browser: "Kalau teks udah muncul, sikat! Gak usah nungguin script background"
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                # Ubah ke networkidle biar dia nunggu semua API (termasuk artikel/loker) selesai ke-fetch
+                await page.goto(url, wait_until="networkidle", timeout=60000)
+
+                # (Opsional tapi sangat dianjurkan untuk Next.js) 
+                # Kasih jeda napas 2 detik buat mastiin animasi/loading state bener-bener hilang dari DOM
+                await page.wait_for_timeout(2000)
 
                 html_content = await page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
