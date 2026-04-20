@@ -4,10 +4,29 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from src.schemas.chat import ChatRequest, ChatResponse
-from src.services.rag_service_grok_v2 import get_rag_chain, classify_intent
+from src.services.rag_service import get_rag_chain, classify_intent
 from src.core.database import get_db
 from src.models.chat_history import ChatLog
 from src.services.lead_service import extract_and_save_lead, check_has_contact
+from langchain_core.messages import HumanMessage, AIMessage
+
+# --- RULE-BASED INTENT PRE-FILTER (0 token, 0 LLM call) ---
+# Kata kunci yang sudah pasti CHITCHAT — tidak perlu tanya LLM
+_CHITCHAT_KEYWORDS = {
+    "halo", "hai", "hi", "hello", "hey", "pagi", "siang", "sore", "malam",
+    "apa kabar", "terima kasih", "makasih", "thanks", "thank you",
+    "ok", "oke", "baik", "siap", "noted", "oke siap"
+}
+
+def classify_intent_smart(user_input: str) -> str:
+    """Coba rule-based dulu. Fallback ke LLM hanya jika tidak match."""
+    lower = user_input.lower().strip()
+    # Kalau pesannya pendek dan keyword cocok, langsung CHITCHAT
+    if len(lower.split()) <= 5 and any(kw in lower for kw in _CHITCHAT_KEYWORDS):
+        return "CHITCHAT"
+    return classify_intent(user_input)  # Fallback ke LLM
+
+MAX_HISTORY = 4  # Ambil 4 pesan terakhir (2 pasang tanya-jawab)
 
 # --- SETUP TRACING LOGGING ---
 # Bikin folder logs kalau belum ada
@@ -32,7 +51,7 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
     current_session_id = request.session_id or str(uuid.uuid4())
 
     try:
-        intent = classify_intent(request.message)
+        intent = classify_intent_smart(request.message)
 
         # 1. REKAM PESAN USER
         user_log = ChatLog(
@@ -57,18 +76,21 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
                 f"🎯 BINGO! Kontak BARU berhasil ditangkap untuk session: {current_session_id}"
             )
 
-        # 3. FORMAT HISTORY
-        formatted_history = ""
+        # 3. FORMAT HISTORY — ambil hanya N pesan terakhir
+        formatted_history = []
         if request.history:
-            for chat in request.history:
-                role = "Klien" if chat.role == "user" else "AI"
-                formatted_history += f"{role}: {chat.content}\n"
+            recent = request.history[-MAX_HISTORY:]  # Trim biar token ga meledak
+            for chat in recent:
+                if chat.role == "user":
+                    formatted_history.append(HumanMessage(content=chat.content))
+                else:
+                    formatted_history.append(AIMessage(content=chat.content))
 
         # 4. JALANKAN RAG DENGAN STATE AWARENESS
         response = rag_chain.invoke(
             {
                 "input": request.message,
-                "chat_history": formatted_history or "Tidak ada riwayat.",
+                "chat_history": formatted_history,
                 "contact_status": status_kontak,
             }
         )

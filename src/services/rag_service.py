@@ -1,29 +1,33 @@
 import os
 from operator import itemgetter
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI  # <-- Berubah ke OpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 CHROMA_DB_DIR = "./data/vectorstore"
 
-# --- 1. INISIALISASI GEMINI 3 FLASH (LATEST 2026) ---
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3-flash-preview", 
-    temperature=0.0,
-    api_key=os.getenv("GOOGLE_API_KEY")
+# --- 1. INISIALISASI OPENAI (Lebih stabil & gak makan VRAM) ---
+llm = ChatOpenAI(
+    model="gpt-4o-mini", temperature=0.0, api_key=os.getenv("OPENAI_API_KEY")
 )
 
-# --- 2. FUNGSI KLASIFIKASI ---
+
+# --- 2. FUNGSI KLASIFIKASI (Cukup di sini aja, hapus yang di file lain) ---
 def classify_intent(user_input: str):
-    intent_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Klasifikasikan input user ke dalam salah satu kategori: TECHNICAL, SALES, KONSULTASI, atau CHITCHAT. Output HANYA satu kata."),
-        ("human", "{input}"),
-    ])
+    intent_prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "Klasifikasikan input user ke dalam salah satu kategori: TECHNICAL, SALES, KONSULTASI, atau CHITCHAT. Output HANYA satu kata.",
+            ),
+            ("human", "{input}"),
+        ]
+    )
     chain = intent_prompt | llm | StrOutputParser()
     try:
         return chain.invoke({"input": user_input}).strip().upper()
@@ -31,15 +35,19 @@ def classify_intent(user_input: str):
         print(f"⚠️ Error Klasifikasi: {e}")
         return "CHITCHAT"
 
+
 # --- 3. FUNGSI RAG UTAMA ---
 def format_docs(docs):
-    """Helper function untuk join dokumen jadi string"""
     return "\n\n".join(
-        f"SUMBER REFERENSI: {doc.metadata.get('source')} (Halaman/Bagian: {doc.metadata.get('page')})\nISI DOKUMEN:\n{doc.page_content}"
-        for doc in docs
+        f"REFERENSI KE-{i+1}:\n"
+        f"JUDUL HALAMAN: {doc.metadata.get('title', 'Website CRI')}\n"
+        f"URL REFERENSI: {doc.metadata.get('source')}\n"
+        f"ISI DOKUMEN:\n{doc.page_content}"
+        for i, doc in enumerate(docs)
     )
 
 def get_rag_chain():
+    # Embedding tetep pake HuggingFace biar gak perlu ingest ulang ChromaDB
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectorstore = Chroma(
         persist_directory=CHROMA_DB_DIR,
@@ -47,67 +55,47 @@ def get_rag_chain():
         collection_name="cliste_knowledge",
     )
 
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
-    # --- PROMPT V7.5 (TIDAK DIUBAH SAMA SEKALI) ---
-    system_prompt = """Anda adalah "Cherio", Executive Technical Consultant di Cliste Rekayasa Indonesia (CRI).
+    system_prompt = """Anda adalah Cherio, AI Technical Consultant di Cliste Rekayasa Indonesia (CRI) — spesialis Maintenance & Reliability Excellence.
 
-[STATUS KONTAK KLIEN SAAT INI: {contact_status}]
+    STRATEGI BAHASA & KEPRIBADIAN (SANGAT PENTING):
+    - Bicara seperti rekan kerja yang ramah, asik, dan luwes. JANGAN KAKU SEPERTI ROBOT CS.
+    - DILARANG KERAS menggunakan kata "Saya" atau "Anda", KECUALI user menggunakannya duluan. Selalu prioritaskan "Aku", "Kamu", atau "Kita".
+    - Gunakan filler words natural (contoh: "Nah", "Btw", "Coba deh", "Boleh banget").
+    - JANGAN pakai bullet points untuk pertanyaan umum. Gunakan paragraf yang mengalir santai.
+    - Pertahankan istilah teknis dalam Bahasa Inggris (Contoh: Root Cause Analysis, Software Development) tanpa diterjemahkan.
 
-[1. KONTROL BAHASA & MEMORI MUTLAK (PRIORITAS TERTINGGI!)]
-- WAJIB DETEKSI BAHASA: Jawab 100% menggunakan BAHASA YANG SAMA dengan input terakhir user. DILARANG KERAS membalas dengan bahasa Inggris jika user bertanya dalam bahasa Indonesia.
-- CEGAH AMNESIA: Anda WAJIB membaca <riwayat_chat>. DILARANG KERAS menanyakan hal yang sudah dijelaskan user di <riwayat_chat>.
-- ANTI-REPETISI: JANGAN PERNAH memperkenalkan diri lagi jika sudah ada percakapan di <riwayat_chat>.
+    ATURAN MEMBERIKAN LINK (HYPERLINK):
+    - JIKA ADA DUA ATAU LEBIH HALAMAN RELEVAN di <konteks> (Misal: halaman Karir DAN halaman Kontak), WAJIB SEBUTKAN SEMUANYA dan rangkai dalam alur obrolan yang nyambung.
+    - Sisipkan link SECARA NATURAL di tengah kalimat menggunakan format markdown: **[Nama Halaman](URL)**.
+    - CONTOH BENAR (1 Link): "Untuk optimasi mesin, kamu bisa baca detail layanannya di halaman **[Reliability Engineering](https://...)** ya."
+    - CONTOH BENAR (2 Link): "Kalau mau cek posisi yang lagi buka, langsung aja mampir ke **[Career Vacancies](https://...)**. Tapi kalau nggak ada yang cocok, boleh banget ngobrol atau tanya-tanya dulu ke tim kita lewat **[Contact Us](https://...)**!"
+    - DILARANG memisahkan link menjadi daftar di akhir pesan.
 
-[2. TONE, PERSONALITY & FORMATTING]
-- Wibawa & Profesional: Gaya bahasa elegan, solutif, dan *to the point*.
-- PARAGRAF: WAJIB gunakan double enter (\n\n) setiap 2-3 kalimat.
-- LISTING: WAJIB menggunakan bullet points (- ) untuk daftar poin.
-- BOLD: WAJIB gunakan **teks tebal** untuk istilah teknis atau layanan.
+    PENGAMBILAN KONTAK [STATUS: {contact_status}]:
+    - Jika SUDAH_DAPAT: JANGAN minta kontak lagi.
+    - Jika BELUM_DAPAT: Tawarkan kontak di akhir pesan jika relevan.
 
-[3. STRICT CONSTRAINTS & GROUNDING]
-- GROUNDING: Jawab murni 100% dari tag <konteks>. Jika tidak ada, akui keterbatasan Anda. DILARANG berimajinasi.
+    <konteks>
+    {context}
+    </konteks>"""
+        
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}")
+        ]
+    )
 
-[4. ATURAN KONSULTASI & MEMINTA KONTAK]
-- RULE 1 - JIKA STATUS [SUDAH_DAPAT]: DILARANG KERAS meminta kontak lagi.
-- RULE 2 - TIMING ([BELUM_DAPAT]): HANYA boleh minta kontak jika masalah dasar sudah tergali DAN Anda tidak bisa memberikan jawaban lebih teknis lagi.
-- RULE 3 - FORMAT SOFT CLOSE: Gunakan kalimat natural untuk mengajak diskusi lebih lanjut.
-- RULE 4 - MAKSIMAL 1 PERTANYAAN: DILARANG memberikan lebih dari 1 pertanyaan balik di akhir jawaban.
-
-[5. REFERENSI URL & LINK SPESIFIK (ATURAN MUTLAK!)]
-- JANGAN memberikan link general (cliste.co.id) jika ada link yang lebih spesifik di dalam "SUMBER REFERENSI" (misal: /about, /services, atau halaman profil).
-- Anda WAJIB mengambil URL persis yang tertera pada atribut "SUMBER REFERENSI" dari dokumen yang paling relevan dengan jawaban Anda.
-- Format Wajib (Markdown): "\n\n🔗 **Pelajari lebih lanjut:** [Judul Halaman/Topik](URL_SPESIFIK_DARI_METADATA)"
-- DILARANG memberikan raw URL tanpa format markdown [Teks](URL).
-
-[6. ATURAN "SHOW-OFF" & DIVERSIFIKASI SUMBER]
-- Jika Anda menemukan informasi yang sama di PDF dan Website, GUNAKAN informasi detail dari PDF sebagai dasar jawaban, TAPI WAJIB AMBIL URL REFERENSI dari Website untuk bagian link "Pelajari lebih lanjut".
-- ANCHORING IT: Arahkan pertanyaan software umum kembali ke spesialisasi Maintenance & Reliability CRI.
-- PRODUK CMMS: Jika user menyebut "CMMS", promosikan "Excellence CMMS" dengan link: 🔗 [excellence-cmms.com](https://excellence-cmms.com/).
-
-<riwayat_chat>
-{chat_history}
-</riwayat_chat>
-
-<konteks>
-{context}
-</konteks>"""
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}")
-    ])
-
-    # --- LCEL CHAIN YANG MENGHASILKAN DICTIONARY ---
-    # Langkah 1: Tarik dokumen dan pasing variabel input
     retrieval_step = RunnableParallel(
         context=itemgetter("input") | retriever,
         input=itemgetter("input"),
         chat_history=itemgetter("chat_history"),
-        contact_status=itemgetter("contact_status")
+        contact_status=itemgetter("contact_status"),
     )
 
-    # Langkah 2: Format context jadi string lalu lempar ke LLM, tapi tetap simpan context asli
     rag_chain = retrieval_step.assign(
         answer=(
             RunnablePassthrough.assign(context=lambda x: format_docs(x["context"]))

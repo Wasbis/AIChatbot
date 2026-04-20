@@ -66,6 +66,8 @@ async def run_scraper():
                 html_content = await page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
 
+                page_title = soup.title.string.strip() if soup.title and soup.title.string else "Website Cliste"
+
                 for junk in soup(
                     ["script", "style", "nav", "footer", "header", "noscript"]
                 ):
@@ -81,8 +83,9 @@ async def run_scraper():
                         page_content=clean_text,
                         metadata={
                             "source": url,
-                            "source_type": "WEBSITE",  # Pembeda dengan PDF
-                            "reliability_score": 1.2,  # Lebih rendah dari PDF (1.5)
+                            "title": page_title,  # <-- TAMBAHKAN INI KE METADATA
+                            "source_type": "WEBSITE",
+                            "reliability_score": 1.2,
                             "page": f"Web_{i+1}",
                         },
                     )
