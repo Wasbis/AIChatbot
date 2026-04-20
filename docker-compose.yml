@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  api_backend:
+    build: .
+    container_name: cri_chatbot_api
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs  # Biar log file nggak ilang kalau container mati
