@@ -1,12 +1,17 @@
 from fastapi import APIRouter, BackgroundTasks
 import subprocess
+import sys
 
 router = APIRouter()
 
 
 def run_scraper_script():
     """Fungsi untuk menjalankan script scraper di background"""
-    subprocess.run(["python", "scripts/scrape_website.py"])
+    subprocess.run(
+        ["python", "-u", "scripts/scrape_website.py"],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
 
 
 @router.post("/website")
