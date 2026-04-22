@@ -11,3 +11,4 @@ services:
       - .env
     volumes:
       - ./logs:/app/logs  # Biar log file nggak ilang kalau container mati
+      - ./data:/app/data  # Biar database & vectorstore tetep ada walau rebuild

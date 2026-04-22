@@ -12,7 +12,7 @@ load_dotenv()
 
 
 
-CHROMA_DB_DIR = "./data/vectorstore"
+CHROMA_DB_DIR = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/vectorstore")
 
 # --- 1. INISIALISASI OPENAI (Lebih stabil & gak makan VRAM) ---
 llm = ChatOpenAI(

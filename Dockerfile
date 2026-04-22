@@ -10,6 +10,9 @@ ENV PYTHONUNBUFFERED=1
 # Copy file requirements dulu biar bisa di-cache sama Docker
 COPY requirements.txt .
 
+# Buat folder data dan logs biar nggak error pas mounting
+RUN mkdir -p data logs
+
 # Install dependencies menggunakan BuildKit Cache Mount
 # Ini bakal jauh lebih cepet pas kamu nambah library baru
 RUN --mount=type=cache,target=/root/.cache/pip \
