@@ -81,7 +81,7 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
 
         # --- 2. JALANKAN INTEL LEAD EXTRACTOR (AMBIL DARI TEKS ASLI) ---
         just_captured_contact = extract_and_save_lead(
-            request.message, current_session_id, db
+            request.message, current_session_id, db, history=request.history
         )
 
         has_contact_in_db = check_has_contact(current_session_id, db)

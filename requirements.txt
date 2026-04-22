@@ -2,22 +2,36 @@
 fastapi
 uvicorn
 pydantic
+pydantic-settings
 
 # --- Database ---
 SQLAlchemy
 
 # --- AI & LLM (LangChain Ecosystem) ---
-langchain
+langchain>=0.2
 langchain-core
+langchain-community>=0.2
 langchain-openai
 langchain-huggingface
 langchain-chroma
 langchain-text-splitters
 
-# --- Web Scraping & Ingestion ---
-beautifulsoup4
-playwright
-requests
+# --- Local ML & Embeddings ---
+chromadb
+sentence-transformers
+transformers>=4.41
+torch
 
-# --- Utilities ---
+# --- Document Loaders & Web Scraping ---
+pypdf
+beautifulsoup4
+lxml
+playwright
+
+# --- Utilities & Network ---
+requests
+httpx
+tenacity
 python-dotenv
+numpy
+tqdm
