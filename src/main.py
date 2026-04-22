@@ -29,6 +29,7 @@ origins = [
     "https://www.cliste.co.id",
     "https://websiteclistev2.cliste.id",
     "https://websitedevelopmentv2.cliste.id",
+    "https://websiteclistev2.cliste.id",
     # "https://chatbot.cliste.id",  # Domain khusus chatbot kalau ada
 ]
 
