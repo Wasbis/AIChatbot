@@ -25,3 +25,4 @@ tenacity
 python-dotenv
 numpy
 tqdm
+markdownify

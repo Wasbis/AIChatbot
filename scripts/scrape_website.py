@@ -9,7 +9,8 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+from markdownify import markdownify as md
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
@@ -78,10 +79,14 @@ async def run_scraper():
                 ):
                     junk.extract()
 
-                text = soup.get_text(separator="\n")
-                clean_text = "\n".join(
-                    [line.strip() for line in text.splitlines() if line.strip()]
-                )
+                # Find the main content area if available, else use body
+                main_content = soup.find("article") or soup.find("main") or soup.body
+                
+                if main_content:
+                    # Convert to markdown
+                    clean_text = md(str(main_content), strip=['a', 'img'], heading_style="ATX").strip()
+                else:
+                    clean_text = ""
 
                 if clean_text:
                     doc = Document(
@@ -124,8 +129,30 @@ async def run_scraper():
         collection_name="cliste_knowledge",
     )
 
+    headers_to_split_on = [
+        ("#", "Header 1"),
+        ("##", "Header 2"),
+        ("###", "Header 3"),
+    ]
+    markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = text_splitter.split_documents(all_documents)
+    
+    chunks = []
+    for doc in all_documents:
+        # Split by markdown headers
+        md_chunks = markdown_splitter.split_text(doc.page_content)
+        
+        # If markdown splitting resulted in no chunks (e.g. no headers), use the original doc
+        if not md_chunks:
+            md_chunks = [doc]
+        else:
+            # Add the original metadata to each markdown chunk
+            for chunk in md_chunks:
+                chunk.metadata.update(doc.metadata)
+                
+        # Further split chunks that are still too large
+        final_chunks = text_splitter.split_documents(md_chunks)
+        chunks.extend(final_chunks)
 
     print(f"🧠 Menyuntikkan {len(chunks)} potongan memori ke dalam otak AI...")
     vectorstore.add_documents(chunks)
