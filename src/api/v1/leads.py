@@ -60,6 +60,9 @@ def get_chat_sessions(db: Session = Depends(get_db)):
             "has_lead": lead is not None,
             "lead_email": lead.email if lead else None,
             "lead_phone": lead.phone if lead else None,
+            "lead_name": lead.name if lead else None,
+            "lead_company": lead.company if lead else None,
+            "lead_quality": lead.lead_quality if lead else None,
             "topic_preview": first_msg.message[:100] if first_msg else "—",
         })
 
@@ -89,6 +92,9 @@ def get_session_detail(session_id: str, db: Session = Depends(get_db)):
             "name": lead.name if lead else None,
             "email": lead.email if lead else None,
             "phone": lead.phone if lead else None,
+            "company": lead.company if lead else None,
+            "quality": lead.lead_quality if lead else None,
+            "project_summary": lead.project_summary if lead else None,
         } if lead else None,
         "conversation": [
             {

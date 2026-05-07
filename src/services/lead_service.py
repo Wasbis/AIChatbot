@@ -15,9 +15,11 @@ def qualify_lead_with_ai(conversation_text: str) -> dict:
     Tentukan apakah Calon Customer ini adalah "HOT", "POTENTIAL", atau "UNCERTAIN".
 
     Kriteria:
-    - HOT: User punya project spesifik, sudah menjelaskan masalah/kebutuhan teknis secara detail, dan berniat diskusi lebih lanjut/minta estimasi.
-    - POTENTIAL: User tertarik pada layanan CRI, bertanya-tanya soal kapabilitas, tapi belum menjelaskan project secara mendalam.
-    - UNCERTAIN: Hanya tanya-tanya umum, chitchat, atau sekedar meninggalkan kontak tanpa konteks project yang jelas.
+    - HOT: User punya project spesifik, sedang mencari solusi untuk masalah operasional (misal: mesin rusak, data berantakan, butuh sistem baru), atau sudah menjelaskan detail teknis/industri mereka (misal: tambang, migas, pabrik). Mereka menunjukkan niat serius untuk perbaikan.
+    - POTENTIAL: User bertanya tentang layanan spesifik CRI, menanyakan kapabilitas tim, atau berdiskusi soal teori implementasi (misal: gimana cara implementasi RCM?) tanpa menyebutkan masalah mendesak saat ini.
+    - UNCERTAIN: Hanya sapaan, chitchat umum (apa kabar, siapa kamu), atau pertanyaan yang sangat dangkal tanpa konteks bisnis/industri.
+
+    PENTING: Jika user berdiskusi panjang lebar soal masalah di perusahaannya (walaupun belum kasih kontak), tandai sebagai HOT atau POTENTIAL. Kita ingin menangkap histori mereka.
 
     Berikan output dalam format JSON murni tanpa markdown:
     {{
@@ -47,20 +49,42 @@ def qualify_lead_with_ai(conversation_text: str) -> dict:
         }
 
 
-def extract_and_save_lead(message: str, session_id: str, db: Session, history: list = None) -> bool:
+def get_lead_qualification(message: str, history: list = None) -> dict:
     """
-    Mengekstrak kontak dan mengkualifikasi lead menggunakan AI jika ada history.
+    Analisis pesan dan history untuk mendapatkan kualitas lead tanpa menyimpan ke DB.
     """
+    conv_parts = []
+    if history:
+        for h in history:
+            role = "Customer" if h.role == "user" else "Cherio (AI)"
+            conv_parts.append(f"{role}: {h.content}")
+    
+    conv_parts.append(f"Customer: {message}")
+    full_conv = "\n".join(conv_parts)
+    return qualify_lead_with_ai(full_conv)
+
+
+def extract_and_save_lead(message: str, session_id: str, db: Session, history: list = None, qualification: dict = None) -> bool:
+    """
+    Mengekstrak kontak dan mengupdate data lead jika ditemukan.
+    """
+    import re
+
     # 1. Regex Email
     email_pattern = r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-]{2,}"
     
     # 2. Regex Phone
     phone_pattern = r"(\+?\d[\d\-\s()]{8,20}\d)"
 
-    import re
+    # 3. Regex Nama & Company (Label based)
+    name_match = re.search(r"(?:Nama|Name)\s*:\s*(.*)", message, re.IGNORECASE)
+    company_match = re.search(r"(?:Perusahaan|Company)\s*:\s*(.*)", message, re.IGNORECASE)
 
     emails = re.findall(email_pattern, message)
     phones = re.findall(phone_pattern, message)
+    
+    clean_name = name_match.group(1).strip() if name_match else None
+    clean_company = company_match.group(1).strip() if company_match else None
 
     # Kalau chat ini gak ngandung WA/Email, langsung false!
     if not emails and not phones:
@@ -70,17 +94,9 @@ def extract_and_save_lead(message: str, session_id: str, db: Session, history: l
     clean_phone = re.sub(r'[\s\-()]', '', phones[0]) if phones else None
     clean_email = emails[0] if emails else None
 
-    # 3. Kumpulkan konteks untuk AI Qualification
-    qualification = None
-    if history:
-        conv_parts = []
-        for h in history:
-            role = "Customer" if h.role == "user" else "Cherio (AI)"
-            conv_parts.append(f"{role}: {h.content}")
-        # Tambahkan pesan terakhir
-        conv_parts.append(f"Customer: {message}")
-        full_conv = "\n".join(conv_parts)
-        qualification = qualify_lead_with_ai(full_conv)
+    # 3. Qualification (Internal)
+    if not qualification and history:
+        qualification = get_lead_qualification(message, history)
 
     existing_lead = db.query(Lead).filter(Lead.session_id == session_id).first()
 
@@ -90,6 +106,10 @@ def extract_and_save_lead(message: str, session_id: str, db: Session, history: l
             existing_lead.email = clean_email
         if clean_phone and not existing_lead.phone:
             existing_lead.phone = clean_phone
+        if clean_name:
+            existing_lead.name = clean_name
+        if clean_company:
+            existing_lead.company = clean_company
         
         # Selalu update kualifikasi terbaru jika tersedia
         if qualification:
@@ -105,7 +125,8 @@ def extract_and_save_lead(message: str, session_id: str, db: Session, history: l
         session_id=session_id,
         email=clean_email,
         phone=clean_phone,
-        name="Prospek B2B",
+        name=clean_name if clean_name else "Prospek B2B",
+        company=clean_company,
         lead_quality=qualification.get("quality") if qualification else "UNCERTAIN",
         project_summary=qualification.get("project_summary") if qualification else None,
         qualification_reasoning=qualification.get("reasoning") if qualification else None,

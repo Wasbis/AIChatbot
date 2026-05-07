@@ -10,7 +10,7 @@ from src.schemas.chat import ChatRequest, ChatResponse
 from src.services.rag_service import get_rag_chain, classify_intent
 from src.core.database import get_db
 from src.models.chat_history import ChatLog
-from src.services.lead_service import extract_and_save_lead, check_has_contact
+from src.services.lead_service import extract_and_save_lead, check_has_contact, get_lead_qualification
 from langchain_core.messages import HumanMessage, AIMessage
 
 # --- FUNGSI MASKING PII (SENSOR DATA SENSITIF) ---
@@ -69,19 +69,21 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
     try:
         intent = classify_intent_smart(request.message)
 
-        # 1. REKAM PESAN USER KE DB (SIMPAN TEKS ASLI TANPA SENSOR)
-        user_log = ChatLog(
-            session_id=current_session_id,
-            role="user",
-            message=request.message, # <-- Asli, buat histori di admin panel lu
-            intent=intent,
-        )
-        db.add(user_log)
-        db.commit()
+        # (Penyimpanan user_log dipindah ke bawah setelah analisis potensi)
 
-        # --- 2. JALANKAN INTEL LEAD EXTRACTOR (AMBIL DARI TEKS ASLI) ---
+        # --- 2. JALANKAN INTEL LEAD ANALYZER (CEK POTENSIAL) ---
+        qualification = get_lead_qualification(request.message, history=request.history)
+        quality = qualification.get("quality", "UNCERTAIN")
+        
+        # Tentukan apakah ini sesi yang perlu disimpan history-nya
+        is_potential = intent in ["SALES", "KONSULTASI"] or quality in ["HOT", "POTENTIAL"]
+        
+        # Signal buat UI: Kapan harus nampilin form kontak?
+        trigger_form = is_potential and not check_has_contact(current_session_id, db)
+
+        # --- 3. JALANKAN INTEL LEAD EXTRACTOR (AMBIL DARI TEKS ASLI) ---
         just_captured_contact = extract_and_save_lead(
-            request.message, current_session_id, db, history=request.history
+            request.message, current_session_id, db, history=request.history, qualification=qualification
         )
 
         has_contact_in_db = check_has_contact(current_session_id, db)
@@ -128,7 +130,7 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
                     if "answer" in chunk:
                         text_chunk = chunk["answer"]
                         full_answer += text_chunk
-                        yield f"data: {json.dumps({'text': text_chunk, 'session_id': current_session_id})}\n\n"
+                        yield f"data: {json.dumps({'text': text_chunk, 'session_id': current_session_id, 'trigger_form': trigger_form})}\n\n"
 
                 # --- 5. TULIS TRACING KE FILE LOG ---
                 trace_msg = f"SESSION: {current_session_id}\n"
@@ -157,16 +159,27 @@ async def chat_with_ai(request: ChatRequest, db: Session = Depends(get_db)):
                         full_answer += closing_msg
                         yield f"data: {json.dumps({'text': closing_msg, 'session_id': current_session_id})}\n\n"
 
-                # 6. REKAM JAWABAN AI
-                ai_log = ChatLog(
-                    session_id=current_session_id,
-                    role="assistant",
-                    message=full_answer,
-                    intent=intent,
-                    needs_human=needs_human,
-                )
-                db.add(ai_log)
-                db.commit()
+                # 6. REKAM JAWABAN & PESAN USER (HANYA JIKA POTENSIAL)
+                if is_potential:
+                    # Simpan pesan user tadi (yang dipending)
+                    user_log = ChatLog(
+                        session_id=current_session_id,
+                        role="user",
+                        message=request.message,
+                        intent=intent,
+                    )
+                    db.add(user_log)
+
+                    # Simpan jawaban AI
+                    ai_log = ChatLog(
+                        session_id=current_session_id,
+                        role="assistant",
+                        message=full_answer,
+                        intent=intent,
+                        needs_human=needs_human,
+                    )
+                    db.add(ai_log)
+                    db.commit()
 
             except Exception as e:
                 db.rollback()

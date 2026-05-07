@@ -8,7 +8,7 @@ from src.api.v1 import chat, leads, ingest
 from src.core.database import engine, Base
 
 # PENTING: Kasih alias "lead_models" biar gak bentrok sama router "leads" di atas
-from src.models import leads as lead_models, chat_history
+from src.models import leads as lead_models, chat_history, ingest_log
 
 # --- 2. JALANKAN MESIN PEMBUAT TABEL ---
 # Baris sakti ini akan mengecek: Kalau cliste_ai.db belum ada, dia bakal bikin file dan tabelnya.

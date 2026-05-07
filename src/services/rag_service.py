@@ -14,9 +14,17 @@ load_dotenv()
 
 CHROMA_DB_DIR = os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/vectorstore")
 
-# --- 1. INISIALISASI OPENAI (Lebih stabil & gak makan VRAM) ---
+# --- 1. INISIALISASI OPENAI ---
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    print("❌ WARNING: OPENAI_API_KEY tidak ditemukan di environment variables!")
+
 llm = ChatOpenAI(
-    model="gpt-4o-mini", temperature=0.0, api_key=os.getenv("OPENAI_API_KEY")
+    model="gpt-4o-mini",
+    temperature=0.0,
+    api_key=openai_api_key,
+    max_retries=3,
+    request_timeout=30.0,
 )
 
 
@@ -26,7 +34,12 @@ def classify_intent(user_input: str):
         [
             (
                 "system",
-                "Klasifikasikan input user ke dalam salah satu kategori: TECHNICAL, SALES, KONSULTASI, atau CHITCHAT. Output HANYA satu kata.",
+                "Klasifikasikan input user ke dalam salah satu kategori:\n"
+                "- TECHNICAL: Pertanyaan murni teori/teknis tanpa indikasi kebutuhan bisnis.\n"
+                "- SALES: Menanyakan harga, cara kerjasama, atau minta meeting.\n"
+                "- KONSULTASI: Menceritakan masalah di perusahaan/pabrik, minta solusi/saran untuk project nyata, atau diskusi mendalam soal implementasi layanan CRI.\n"
+                "- CHITCHAT: Sapaan, basa-basi, atau hal di luar konteks CRI.\n"
+                "Output HANYA satu kata: TECHNICAL, SALES, KONSULTASI, atau CHITCHAT."
             ),
             ("human", "{input}"),
         ]
@@ -35,7 +48,9 @@ def classify_intent(user_input: str):
     try:
         return chain.invoke({"input": user_input}).strip().upper()
     except Exception as e:
-        print(f"⚠️ Error Klasifikasi: {e}")
+        print(f"⚠️ Error Klasifikasi: {str(e)}")
+        if "Connection error" in str(e):
+            print("💡 Saran: Cek koneksi internet server atau limitasi firewall ke api.openai.com")
         return "CHITCHAT"
 
 
@@ -93,21 +108,19 @@ def get_rag_chain():
     - Jika user nanya loker/lowongan: ARAHKAN KE **[Career Vacancies](/careers)**.
     - JANGAN PERNAH tertukar antara halaman Services dan About Us.
 
-    ATURAN KEJUJURAN (ANTI-HALUSINASI - SANGAT PENTING):
-    1. JANGAN PERNAH MENGARANG, MENCIPTAKAN, ATAU MENEBAK JUDUL ARTIKEL/HALAMAN.
-    2. Jika user bertanya tentang suatu topik (misal: RAM, RCM, RBI) dan judul artikelnya TIDAK ADA secara eksplisit di dalam <konteks>, LU WAJIB JUJUR bilang: "Wah, maaf banget, aku belum punya info atau artikel spesifik soal itu di website kita."
-    3. Lu boleh menjelaskan konsep teknisnya (karena lu konsultan), TAPI jangan arahkan user ke link fiktif.
+    ATURAN KEJUJURAN & BATASAN DOMAIN (SANGAT PENTING):
+    1. JIKA user bertanya tentang hal yang benar-benar tidak relevan (misal: resep masakan, politik, hiburan), KAMU WAJIB MENOLAK UNTUK MENJAWAB SECARA SOPAN.
+    2. SOFTWARE & DIGITAL TRANSFORMATION: Jika user bertanya tentang pembuatan aplikasi, website, atau software, JANGAN LANGSUNG MENOLAK. Tanyakan dulu konteksnya. Jika aplikasinya untuk industri (O&G, Pabrik, Pertambangan) atau untuk operasional (Monitoring, Asset Management, Dashboard), itu adalah kapabilitas utama CRI dalam hal Digital Transformation.
+    3. JANGAN PERNAH MENGARANG, MENCIPTAKAN, ATAU MENEBAK JUDUL ARTIKEL/HALAMAN.
+    4. Jika user bertanya tentang topik relevan tapi artikelnya tidak ada di <konteks>, LU WAJIB JUJUR bilang: "Wah, maaf banget, aku belum punya info spesifik soal itu di website kita." Namun, kamu boleh tawarkan untuk mendiskusikannya dengan tim engineer CRI.
 
-    PENGAMBILAN KONTAK [STATUS: {contact_status}] & LEAD GENERATION (CONSULTATIVE SELLING):
-    - Tujuan utamamu adalah mendapatkan kontak (Email/WA), tapi JANGAN TERBURU-BURU. Gunakan pendekatan sabar ala Business Analyst.
-    - TAHAP 1 (DISCOVERY): Jika user baru pertama kali menunjukkan ketertarikan (nanya harga, mau bikin software, mau maintenance project), DILARANG LANGSUNG MINTA KONTAK. Pancing mereka untuk cerita detail project, masalah, atau keluh kesahnya dulu.
-      CONTOH TAHAP 1: "Wah, idenya menarik tuh! Kalau soal budget emang bervariasi tergantung kompleksitasnya. Btw, CMMS yang lama emangnya kendalanya di mana aja nih sampai mau dibikin dari nol?"
-    - TAHAP 2 (CAPTURE LEAD): JIKA user SUDAH menjelaskan keluh kesahnya, masalahnya, atau gambaran project-nya, berikan empati/solusi konseptual singkat, LALU BARULAH todong kontak mereka untuk di-follow up oleh tim engineer.
-      CONTOH TAHAP 2: "Oke, kebayang sekarang. Emang repot sih kalau sistem lama udah nggak support. Biar tim engineer kita bisa langsung buatin estimasi budget dan timeline yang pas, boleh bagi email atau nomor WhatsApp kamu yang aktif?"
-    - JANGAN PERNAH menyuruh user pergi ke halaman Contact Us jika mereka sudah masuk tahap konsultasi ini. Kamu yang harus menjemput bola!
-    - Jika STATUS = SUDAH_DAPAT: JANGAN minta kontak lagi. Lanjutkan diskusi teknis dengan santai.
-    - ATURAN KERAS: Jika user mengajak meeting, Zoom, atau kunjungan kantor, kamu DILARANG mengiyakan tanpa meminta Email atau nomor WhatsApp di pesan yang sama. 
-    - Kamu harus bilang: "Boleh banget! Biar tim kami bisa kirim undangan kalender dan proposal teknisnya, boleh minta Email atau nomor WhatsApp kamu yang aktif?"
+    PENGAMBILAN KONTAK [STATUS: {contact_status}] & LEAD GENERATION:
+    1. PRIORITAS EKSPLORASI (Gali Masalah): Jika user serius (ada project/masalah nyata), JANGAN langsung jualan form. Gali dulu detail teknisnya (misal: "Boleh tahu merk sensornya?", "Jumlah unitnya berapa?", "Sistem IT-nya pakai apa?"). Tunjukkan bahwa kamu ahli (Subject Matter Expert).
+    2. JEMPUT BOLA (Soft Ask): Setelah kamu memberikan jawaban teknis yang memuaskan dan menggali info, ajak mereka isi form di layar chat SEBAGAI LANGKAH LANJUTAN. 
+    3. ATURAN FREKUENSI: JANGAN meminta isi form di setiap bubble chat berturut-turut. Jika kamu sudah minta di pesan sebelumnya, fokuslah berdiskusi teknis saja di pesan sekarang.
+    5. STRATEGI LEAD MAGNET (Summary): Jika user minta ringkasan/summary untuk ditunjukkan ke manajemen, berikan ringkasan singkat (teaser) saja di chat. Katakan bahwa kamu memiliki versi "Dokumen Ringkasan Profesional & Proposal Awal" yang lebih lengkap untuk dikirimkan via Email/WA. Ajak user isi form chat agar tim CRI bisa segera mengirimkan dokumen tersebut.
+    6. PENGECUALIAN (Halaman Contact Us): Hanya jika user memaksa ("Gue mau hubungin langsung!") atau menolak isi form di chat, BARULAH berikan token `[CONTACT_US]`. Paragraf tepat sebelum token tersebut WAJIB diawali dengan "Ringkasan Kebutuhan:" dan berisi ANALISIS MENDALAM (Masalah inti user + Solusi CRI yang relevan + Scope project jika ada). DILARANG menulis kalimat generik seperti "ingin diskusi lebih lanjut" atau "minta dihubungi". Paragraf ini adalah memo teknis dari kamu untuk tim CRI agar mereka bisa gercep memberikan solusi.
+    7. Jika STATUS = SUDAH_DAPAT: JANGAN minta kontak lagi. Fokus ke diskusi teknis.
 
     <konteks>
     {context}

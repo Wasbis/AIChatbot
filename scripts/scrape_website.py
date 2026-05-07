@@ -1,5 +1,9 @@
 import asyncio
 import os
+import re
+import argparse
+from src.core.database import SessionLocal
+from src.models.ingest_log import IngestLog
 
 # --- FIX 1: Matikan telemetri ChromaDB biar terminal bersih dari error log ---
 os.environ["CHROMA_TELEMETRY_DISABLED"] = "1"
@@ -43,12 +47,27 @@ def get_urls_from_sitemap(sitemap_url: str):
         return FALLBACK_URLS
 
 
-async def run_scraper():
+async def run_scraper(task_id: int = None):
+    db = SessionLocal()
+    def update_task(status=None, message=None, total=None, processed=None, failed=None):
+        if task_id:
+            task = db.query(IngestLog).filter(IngestLog.id == task_id).first()
+            if task:
+                if status: task.status = status
+                if message: task.message = message
+                if total is not None: task.total_urls = total
+                if processed is not None: task.processed_urls = processed
+                if failed is not None: task.failed_urls = failed
+                db.commit()
+
+    update_task(status="RUNNING", message="🕵️‍♂️ Cliste Knowledge Crawler V6 Initiated...")
     print("🕵️‍♂️ Cliste Knowledge Crawler V6 Initiated...")
 
     urls_to_scrape = get_urls_from_sitemap(TARGET_SITEMAP)
+    update_task(total=len(urls_to_scrape), message=f"✅ Ditemukan {len(urls_to_scrape)} halaman di Sitemap!")
     all_documents = []
     failed_count = 0
+    success_count = 0
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -85,6 +104,19 @@ async def run_scraper():
                 if main_content:
                     # Convert to markdown
                     clean_text = md(str(main_content), strip=['a', 'img'], heading_style="ATX").strip()
+                    
+                    # Extract Author and Date using Regex
+                    author_match = re.search(r'Author\s*:\s*(.+)', clean_text, re.IGNORECASE)
+                    date_match = re.search(r'(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', clean_text)
+                    
+                    extracted_info = ""
+                    if author_match:
+                        extracted_info += f"Penulis Artikel: {author_match.group(1).strip()}\n"
+                    if date_match:
+                        extracted_info += f"Tanggal Publikasi: {date_match.group(1).strip()}\n"
+                        
+                    if extracted_info:
+                        clean_text = f"{extracted_info}\n{clean_text}"
                 else:
                     clean_text = ""
 
@@ -107,8 +139,13 @@ async def run_scraper():
             except Exception as e:
                 print(f"  ❌ Gagal parse URL {url}: {e}")
                 failed_count += 1
+                update_task(processed=success_count, failed=failed_count, message=f"⚠️ Gagal parse URL {url}")
                 os.makedirs("logs", exist_ok=True)
                 await page.screenshot(path=f"logs/error_cliste_{i}.png")
+            
+            # Update progress every URL
+            success_count = len(all_documents)
+            update_task(processed=success_count, failed=failed_count)
 
         await browser.close()
 
@@ -119,6 +156,8 @@ async def run_scraper():
 
     if not all_documents:
         print("🛑 Eksekusi dibatalkan, tidak ada data untuk di-ingest.")
+        update_task(status="FAILED", message="🛑 Eksekusi dibatalkan, tidak ada data untuk di-ingest.")
+        db.close()
         return
 
     print("\n⚙️ Memulai Ingestion ke Chroma DB...")
@@ -157,7 +196,14 @@ async def run_scraper():
     print(f"🧠 Menyuntikkan {len(chunks)} potongan memori ke dalam otak AI...")
     vectorstore.add_documents(chunks)
     print("✅ Misi Selesai! AI lu sekarang hafal luar kepala isi cliste.co.id.")
+    update_task(status="SUCCESS", message="✅ Misi Selesai! AI hafal isi website.")
+    db.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(run_scraper())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task-id", type=int, help="ID of the ingestion task in database")
+    args = parser.parse_args()
+    
+    import asyncio
+    asyncio.run(run_scraper(task_id=args.task_id))
